@@ -20,7 +20,6 @@ import {
   Eye,
   ChevronRight,
   ChevronDown,
-  Folder
 } from 'lucide-react';
 import { ConnectionProfile, S3Object, FileOperation } from '../types';
 
@@ -237,9 +236,7 @@ const FileExplorer: React.FC<FileExplorerProps> = ({
         
         if (!pathMap.has(currentPath)) {
           const node = {
-            key: currentPath,
             name: part,
-            is_dir: index < pathParts.length - 1 || obj.is_dir,
             level: index,
             expanded: expandedFolders.has(currentPath),
             children: [],
