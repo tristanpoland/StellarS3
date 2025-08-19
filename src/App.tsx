@@ -16,6 +16,7 @@ function App() {
   const [currentPath, setCurrentPath] = useState<string>('');
   const [buckets, setBuckets] = useState<S3Bucket[]>([]);
   const [objects, setObjects] = useState<S3Object[]>([]);
+  const [allObjects, setAllObjects] = useState<S3Object[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
   const [showConnectionManager, setShowConnectionManager] = useState<boolean>(false);
   const [fileOperations, setFileOperations] = useState<FileOperation[]>([]);
@@ -35,6 +36,10 @@ function App() {
         console.log('Auto-setting active connection and loading buckets');
         setActiveConnection(active);
         loadBuckets(active.config);
+      } else {
+        // If there are connections but none active, show connection manager
+        console.log('Connections exist but none active, showing connection manager');
+        setShowConnectionManager(true);
       }
     }
   }, [connections]);
@@ -56,6 +61,23 @@ function App() {
       addToast(`Failed to load buckets: ${error}`, 'error');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadAllObjects = async (bucket: string) => {
+    if (!activeConnection) return;
+    
+    console.log('Loading ALL objects for search in bucket:', bucket);
+    try {
+      const result = await invoke<S3Object[]>('list_all_objects', {
+        config: activeConnection.config,
+        bucket
+      });
+      console.log(`Loaded ${result.length} total objects:`, result);
+      setAllObjects(result);
+    } catch (error) {
+      console.error('Failed to load all objects:', error);
+      addToast(`Failed to load all objects: ${error}`, 'error');
     }
   };
 
@@ -81,12 +103,17 @@ function App() {
     console.log('handleConnectionSelect called with:', connection.name);
     console.log('Current connections before update:', connections);
     
+    // Update the connections array to mark this one as active
+    const updatedConnections = connections.map(conn => ({
+      ...conn,
+      is_active: conn.id === connection.id
+    }));
+    setConnections(updatedConnections);
+    
     // Set active connection immediately to prevent null state
-    setActiveConnection(connection);
+    setActiveConnection({...connection, is_active: true});
     setShowConnectionManager(false);
     
-    // Don't modify connections here - let the ConnectionManager handle that
-    // We just need to set the active connection and load buckets
     setCurrentBucket('');
     setCurrentPath('');
     console.log('About to load buckets...');
@@ -96,7 +123,9 @@ function App() {
   const handleBucketSelect = (bucket: string) => {
     setCurrentBucket(bucket);
     setCurrentPath('');
+    // Load both the current folder view AND all objects for search
     loadObjects(bucket);
+    loadAllObjects(bucket);
   };
 
   const handlePathChange = (path: string) => {
@@ -109,6 +138,8 @@ function App() {
   const handleRefresh = () => {
     if (currentBucket) {
       loadObjects(currentBucket, currentPath);
+      // Also refresh all objects for search
+      loadAllObjects(currentBucket);
     } else if (activeConnection) {
       loadBuckets(activeConnection.config);
     }
@@ -157,6 +188,7 @@ function App() {
             currentBucket={currentBucket}
             currentPath={currentPath}
             objects={objects}
+            allObjects={allObjects}
             loading={loading}
             onPathChange={handlePathChange}
             onRefresh={handleRefresh}

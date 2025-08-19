@@ -28,6 +28,7 @@ interface FileExplorerProps {
   currentBucket: string;
   currentPath: string;
   objects: S3Object[];
+  allObjects: S3Object[];
   loading: boolean;
   onPathChange: (path: string) => void;
   onRefresh: () => void;
@@ -43,6 +44,7 @@ const FileExplorer: React.FC<FileExplorerProps> = ({
   currentBucket,
   currentPath,
   objects,
+  allObjects,
   loading,
   onPathChange,
   onRefresh,
@@ -99,32 +101,161 @@ const FileExplorer: React.FC<FileExplorerProps> = ({
     return new Date(dateString).toLocaleString();
   };
 
+  // Fuzzy search function with highlighting
+  const fuzzyMatch = (text: string, query: string): { matches: boolean; highlightedText?: string } => {
+    if (!query) return { matches: true };
+    
+    const textLower = text.toLowerCase();
+    
+    // Check if query is quoted (exact sequence matching)
+    const isQuoted = (query.startsWith('"') && query.endsWith('"')) || 
+                     (query.startsWith("'") && query.endsWith("'"));
+    
+    let searchQuery = query;
+    if (isQuoted) {
+      // Remove quotes for searching
+      searchQuery = query.slice(1, -1);
+    }
+    
+    const queryLower = searchQuery.toLowerCase();
+    
+    if (isQuoted) {
+      // Quoted search: exact sequence match only
+      const substringIndex = textLower.indexOf(queryLower);
+      if (substringIndex !== -1) {
+        const highlightedText = (
+          text.substring(0, substringIndex) +
+          '<mark class="bg-amoled-success/30 text-amoled-text rounded px-1">' +
+          text.substring(substringIndex, substringIndex + searchQuery.length) +
+          '</mark>' +
+          text.substring(substringIndex + searchQuery.length)
+        );
+        return { matches: true, highlightedText };
+      }
+      return { matches: false };
+    }
+    
+    // Unquoted search: try substring first, then fuzzy
+    const substringIndex = textLower.indexOf(queryLower);
+    if (substringIndex !== -1) {
+      const highlightedText = (
+        text.substring(0, substringIndex) +
+        '<mark class="bg-amoled-accent/30 text-amoled-text rounded px-1">' +
+        text.substring(substringIndex, substringIndex + searchQuery.length) +
+        '</mark>' +
+        text.substring(substringIndex + searchQuery.length)
+      );
+      return { matches: true, highlightedText };
+    }
+    
+    // Fuzzy matching - allow characters to be out of order (only for unquoted)
+    const matchedIndices: number[] = [];
+    let textIndex = 0;
+    let queryIndex = 0;
+    
+    while (textIndex < textLower.length && queryIndex < queryLower.length) {
+      if (textLower[textIndex] === queryLower[queryIndex]) {
+        matchedIndices.push(textIndex);
+        queryIndex++;
+      }
+      textIndex++;
+    }
+    
+    if (queryIndex === queryLower.length) {
+      // Create highlighted text with fuzzy matches
+      let highlightedText = '';
+      for (let i = 0; i < text.length; i++) {
+        if (matchedIndices.includes(i)) {
+          highlightedText += '<mark class="bg-amoled-warning/30 text-amoled-text rounded px-1">' + text[i] + '</mark>';
+        } else {
+          highlightedText += text[i];
+        }
+      }
+      return { matches: true, highlightedText };
+    }
+    
+    return { matches: false };
+  };
+
+  // Component to render highlighted text
+  const HighlightedText: React.FC<{ text: string; query: string }> = ({ text, query }) => {
+    const result = fuzzyMatch(text, query);
+    if (result.highlightedText) {
+      return <span dangerouslySetInnerHTML={{ __html: result.highlightedText }} />;
+    }
+    return <span>{text}</span>;
+  };
+
   const filteredObjects = useMemo(() => {
-    // Create a Set to track folders we've already added
+    console.log('filteredObjects recalculating:', {
+      searchQuery,
+      currentPath,
+      objectsCount: objects.length,
+      allObjectsCount: allObjects.length
+    });
+
+    if (searchQuery) {
+      // SEARCH MODE: Use allObjects for comprehensive search
+      console.log('Search mode - using allObjects:', allObjects.length);
+      
+      const searchResults = allObjects.filter(obj => {
+        // Try matching against filename first
+        const fileName = obj.key.split('/').pop() || obj.key;
+        const fileNameMatch = fuzzyMatch(fileName, searchQuery);
+        
+        // Try matching against full path
+        const fullPathMatch = fuzzyMatch(obj.key, searchQuery);
+        
+        // Try matching against directory parts
+        const pathParts = obj.key.split('/');
+        const pathPartsMatch = pathParts.some(part => fuzzyMatch(part, searchQuery).matches);
+        
+        const matches = fileNameMatch.matches || fullPathMatch.matches || pathPartsMatch;
+        
+        if (matches) {
+          console.log('Search match found:', {
+            key: obj.key,
+            fileName,
+            fileNameMatch: fileNameMatch.matches,
+            fullPathMatch: fullPathMatch.matches,
+            pathPartsMatch
+          });
+        }
+        
+        return matches;
+      });
+      
+      console.log(`Search results: ${searchResults.length} matches out of ${allObjects.length} total objects`);
+      return searchResults;
+    }
+
+    // BROWSE MODE: Use objects for hierarchical display
+    console.log('Browse mode - using objects for path:', currentPath);
+    
     const addedFolders = new Set<string>();
     const result: S3Object[] = [];
 
-    // First filter by current path
+    // Filter by current path to show only direct children
     const pathFilteredObjects = objects.filter(obj => {
       if (!currentPath) {
-        // At root level - show all direct items
-        return true;
+        return true; // At root level - include all objects
       } else {
-        // In a folder - show items that start with current path
-        return obj.key.startsWith(currentPath + '/') || obj.key === currentPath;
+        return obj.key.startsWith(currentPath + '/');
       }
     });
 
-    // Process each object to show direct children only
+    console.log(`Path filtered objects: ${pathFilteredObjects.length}`);
+
+    // Process each object to show the correct hierarchy
     pathFilteredObjects.forEach(obj => {
       if (!currentPath) {
-        // At root - show files and create folder objects for directories
+        // At root level
         const pathParts = obj.key.split('/');
-        if (pathParts.length === 1) {
-          // Direct file
+        if (pathParts.length === 1 || obj.is_dir) {
+          // Direct file or actual directory object
           result.push(obj);
         } else {
-          // File in subdirectory - create folder object
+          // File in subdirectory - create synthetic folder
           const folderName = pathParts[0];
           if (!addedFolders.has(folderName)) {
             addedFolders.add(folderName);
@@ -137,16 +268,18 @@ const FileExplorer: React.FC<FileExplorerProps> = ({
           }
         }
       } else {
-        // In a folder
+        // In a specific folder
+        if (obj.key === currentPath) return; // Skip the folder itself
+        
         const relativePath = obj.key.substring(currentPath.length + 1);
-        if (!relativePath) return; // Skip the folder itself
+        if (!relativePath) return;
         
         const pathParts = relativePath.split('/');
-        if (pathParts.length === 1) {
-          // Direct child (file or folder)
+        if (pathParts.length === 1 || obj.is_dir) {
+          // Direct child (file or directory)
           result.push(obj);
         } else {
-          // File in subdirectory - create folder object
+          // File in subdirectory - create synthetic folder
           const folderName = pathParts[0];
           const folderPath = currentPath + '/' + folderName;
           if (!addedFolders.has(folderPath)) {
@@ -162,11 +295,9 @@ const FileExplorer: React.FC<FileExplorerProps> = ({
       }
     });
 
-    // Then filter by search query
-    return result.filter(obj =>
-      obj.key.toLowerCase().includes(searchQuery.toLowerCase())
-    );
-  }, [objects, currentPath, searchQuery]);
+    console.log(`Browse results: ${result.length} items for display`);
+    return result;
+  }, [objects, allObjects, currentPath, searchQuery]);
 
   const sortedObjects = useMemo(() => {
     return [...filteredObjects].sort((a, b) => {
@@ -604,25 +735,27 @@ const FileExplorer: React.FC<FileExplorerProps> = ({
         </div>
 
         {/* Breadcrumb */}
-        <div className="flex items-center space-x-2 text-sm">
-          <button
-            onClick={() => onPathChange('')}
-            className="text-amoled-accent hover:text-amoled-accent-hover"
-          >
-            {currentBucket}
-          </button>
-          {pathSegments.map((segment, index) => (
-            <React.Fragment key={index}>
-              <span className="text-amoled-text-muted">/</span>
-              <button
-                onClick={() => onPathChange(pathSegments.slice(0, index + 1).join('/'))}
-                className="text-amoled-accent hover:text-amoled-accent-hover"
-              >
-                {segment}
-              </button>
-            </React.Fragment>
-          ))}
-        </div>
+        {!searchQuery && (
+          <div className="flex items-center space-x-2 text-sm">
+            <button
+              onClick={() => onPathChange('')}
+              className="text-amoled-accent hover:text-amoled-accent-hover"
+            >
+              {currentBucket}
+            </button>
+            {pathSegments.map((segment, index) => (
+              <React.Fragment key={index}>
+                <span className="text-amoled-text-muted">/</span>
+                <button
+                  onClick={() => onPathChange(pathSegments.slice(0, index + 1).join('/'))}
+                  className="text-amoled-accent hover:text-amoled-accent-hover"
+                >
+                  {segment}
+                </button>
+              </React.Fragment>
+            ))}
+          </div>
+        )}
 
         {/* Search */}
         <AnimatePresence>
@@ -634,12 +767,22 @@ const FileExplorer: React.FC<FileExplorerProps> = ({
               className="mt-4"
             >
               <input
-                type="text"
-                placeholder="Search files..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="input-field w-full max-w-md"
+              type="text"
+              placeholder={`Fuzzy search or "exact phrase" (recursive through all files)...`}
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="input-field w-full max-w-md"
               />
+              {searchQuery && (
+              <p className="text-xs text-amoled-text-secondary mt-1">
+                {((searchQuery.startsWith('"') && searchQuery.endsWith('"')) ||
+                (searchQuery.startsWith("'") && searchQuery.endsWith("'"))) ? (
+                <>Exact phrase search in {currentBucket} - characters must be in order</>
+                ) : (
+                <>Fuzzy search in {currentBucket} - characters can be in any order</>
+                )}
+              </p>
+              )}
             </motion.div>
           )}
         </AnimatePresence>
@@ -705,15 +848,25 @@ const FileExplorer: React.FC<FileExplorerProps> = ({
                     <div className="flex flex-col items-center space-y-2">
                       <Icon className={`w-8 h-8 ${object.is_dir ? 'text-amoled-accent' : 'text-amoled-text-muted'}`} />
                       <div className="text-center">
-                        <div className="text-sm font-medium text-amoled-text truncate w-full">
-                          {object.is_dir 
-                            ? object.key.split('/').filter(Boolean).pop() || object.key
-                            : object.key.split('/').pop()
-                          }
+                        <div className="text-sm font-medium text-amoled-text truncate w-full" title={object.key}>
+                          {searchQuery ? (
+                            // In search mode, show full path with highlighting
+                            <HighlightedText text={object.key} query={searchQuery} />
+                          ) : (
+                            // In normal mode, show just filename/folder name
+                            object.is_dir 
+                              ? object.key.split('/').filter(Boolean).pop() || object.key
+                              : object.key.split('/').pop()
+                          )}
                         </div>
                         {!object.is_dir && (
                           <div className="text-xs text-amoled-text-muted">
                             {formatFileSize(object.size)}
+                            {searchQuery && (
+                              <div className="text-xs text-amoled-text-muted mt-1">
+                                {object.key.split('/').slice(0, -1).join('/')}
+                              </div>
+                            )}
                           </div>
                         )}
                       </div>
@@ -776,15 +929,23 @@ const FileExplorer: React.FC<FileExplorerProps> = ({
                   <Icon className={`w-5 h-5 flex-shrink-0 ${object.is_dir ? 'text-amoled-accent' : 'text-amoled-text-muted'}`} />
                   <div className="flex-1 min-w-0">
                     <div className="font-medium text-amoled-text truncate">
-                      {object.is_dir 
-                        ? object.key.split('/').filter(Boolean).pop() || object.key
-                        : object.key.split('/').pop()
-                      }
+                      {searchQuery ? (
+                        // In search mode, show full path with highlighting
+                        <HighlightedText text={object.key} query={searchQuery} />
+                      ) : (
+                        // In normal mode, show just filename/folder name
+                        object.is_dir 
+                          ? object.key.split('/').filter(Boolean).pop() || object.key
+                          : object.key.split('/').pop()
+                      )}
                     </div>
                     <div className="text-sm text-amoled-text-muted">
                       {object.is_dir ? 'Folder' : formatFileSize(object.size)}
                       {object.last_modified && (
                         <span className="ml-2">• {formatDate(object.last_modified)}</span>
+                      )}
+                      {searchQuery && !object.is_dir && (
+                        <span className="ml-2">• {object.key.split('/').slice(0, -1).join('/')}</span>
                       )}
                     </div>
                   </div>

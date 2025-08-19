@@ -29,6 +29,12 @@ pub async fn list_objects(config: S3Config, bucket: String, prefix: Option<Strin
 }
 
 #[command]
+pub async fn list_all_objects(config: S3Config, bucket: String) -> Result<Vec<S3Object>, String> {
+    let manager = S3Manager::new(config).await.map_err(|e| e.to_string())?;
+    manager.list_all_objects(&bucket).await.map_err(|e| e.to_string())
+}
+
+#[command]
 pub async fn upload_file(config: S3Config, bucket: String, key: String, file_path: String) -> Result<(), String> {
     let manager = S3Manager::new(config).await.map_err(|e| e.to_string())?;
     manager.upload_file(&bucket, &key, &file_path).await.map_err(|e| e.to_string())

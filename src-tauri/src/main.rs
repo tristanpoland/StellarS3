@@ -15,6 +15,7 @@ fn main() {
             commands::connect_to_s3,
             commands::list_buckets,
             commands::list_objects,
+            commands::list_all_objects,
             commands::upload_file,
             commands::upload_data,
             commands::download_file,

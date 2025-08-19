@@ -1,6 +1,6 @@
 [package]
 name = "stellars3"
-version = "1.0.0"
+version = "2.0.0"
 description = "Modern S3 file manager with AMOLED black theme"
 authors = ["StellarS3 Team"]
 license = "MIT"

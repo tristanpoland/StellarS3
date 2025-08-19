@@ -137,6 +137,114 @@ impl S3Manager {
         Ok(objects)
     }
 
+    pub async fn list_all_objects(&self, bucket: &str) -> Result<Vec<S3Object>> {
+        let mut objects = Vec::new();
+        let mut continuation_token: Option<String> = None;
+        let mut seen_keys = std::collections::HashSet::new();
+
+        println!("Starting comprehensive object enumeration for bucket: {}", bucket);
+
+        loop {
+            let mut request = self.client.list_objects_v2()
+                .bucket(bucket)
+                .max_keys(1000); // Get more objects per request for efficiency
+
+            if let Some(token) = continuation_token.as_ref() {
+                request = request.continuation_token(token);
+            }
+
+            let response = request.send().await?;
+            println!("Got response with {} contents and {} common_prefixes", 
+                response.contents().len(), 
+                response.common_prefixes().len()
+            );
+
+            // Add files FIRST (before directories to avoid conflicts)
+            let contents = response.contents();
+            for object in contents {
+                let key = object.key().unwrap_or("").to_string();
+                
+                if key.is_empty() || seen_keys.contains(&key) {
+                    continue;
+                }
+                
+                seen_keys.insert(key.clone());
+                
+                // Check if it's a directory marker (ends with / and has 0 size)
+                let is_directory_marker = key.ends_with('/') && object.size() == Some(0);
+                
+                if is_directory_marker {
+                    // Create directory object
+                    objects.push(S3Object {
+                        key: key.clone(),
+                        size: 0,
+                        last_modified: object.last_modified().map(|dt| {
+                            DateTime::from_timestamp(dt.secs(), dt.subsec_nanos()).unwrap_or_default()
+                        }),
+                        etag: object.e_tag().map(|s| s.to_string()),
+                        storage_class: object.storage_class().map(|s| s.as_str().to_string()),
+                        is_dir: true,
+                        content_type: Some("application/x-directory".to_string()),
+                    });
+                    println!("Added directory marker: {}", key);
+                } else {
+                    // Regular file
+                    objects.push(S3Object {
+                        key: key.clone(),
+                        size: object.size().unwrap_or(0),
+                        last_modified: object.last_modified().map(|dt| {
+                            DateTime::from_timestamp(dt.secs(), dt.subsec_nanos()).unwrap_or_default()
+                        }),
+                        etag: object.e_tag().map(|s| s.to_string()),
+                        storage_class: object.storage_class().map(|s| s.as_str().to_string()),
+                        is_dir: false,
+                        content_type: mime_guess::from_path(&key).first().map(|m| m.to_string()),
+                    });
+                    println!("Added file: {} ({} bytes)", key, object.size().unwrap_or(0));
+                }
+            }
+
+            // Add directories from common prefixes (only if we haven't seen them as actual objects)
+            let common_prefixes = response.common_prefixes();
+            for prefix in common_prefixes {
+                if let Some(prefix_str) = prefix.prefix() {
+                    if !seen_keys.contains(prefix_str) {
+                        seen_keys.insert(prefix_str.to_string());
+                        objects.push(S3Object {
+                            key: prefix_str.to_string(),
+                            size: 0,
+                            last_modified: None,
+                            etag: None,
+                            storage_class: None,
+                            is_dir: true,
+                            content_type: Some("application/x-directory".to_string()),
+                        });
+                        println!("Added common prefix directory: {}", prefix_str);
+                    }
+                }
+            }
+
+            // Check if we need to continue
+            match response.next_continuation_token() {
+                Some(token) => {
+                    continuation_token = Some(token.to_string());
+                    println!("Continuing with token: {}", token);
+                }
+                None => {
+                    println!("No more continuation token, finished enumeration");
+                    break;
+                }
+            }
+        }
+
+        println!("Total objects enumerated: {} (unique keys: {})", objects.len(), seen_keys.len());
+        
+        // Sort for consistent output
+        objects.sort_by(|a, b| a.key.cmp(&b.key));
+        
+        Ok(objects)
+    }
+
     pub async fn upload_file(&self, bucket: &str, key: &str, file_path: &str) -> Result<()> {
         let body = ByteStream::from_path(file_path).await?;
         
