@@ -28,7 +28,6 @@
   "bundle": {
     "active": true,
     "targets": "all",
-    "identifier": "com.stellars3.app",
     "icon": [
       "icons/icon.ico",
       "icons/icon.png"
