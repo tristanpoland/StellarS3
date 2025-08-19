@@ -153,9 +153,8 @@ const ConnectionManager: React.FC<ConnectionManagerProps> = ({
 
     onConnectionsChange(updatedConnections);
     
-    if (isFirstConnection) {
-      onConnectionSelect(newConnection);
-    }
+    // Always select the connection we just created/updated
+    onConnectionSelect(newConnection);
     
     resetForm();
   };
@@ -422,9 +421,14 @@ const ConnectionManager: React.FC<ConnectionManagerProps> = ({
         ) : (
           <div>
             <div className="flex items-center justify-between mb-6">
-              <h2 className="text-xl font-semibold text-amoled-text">
-                Your Connections
-              </h2>
+              <div>
+                <h2 className="text-xl font-semibold text-amoled-text">
+                  Your Connections
+                </h2>
+                <p className="text-amoled-text-secondary text-sm">
+                  Click any connection to connect, or edit to modify settings
+                </p>
+              </div>
               <button onClick={() => setShowForm(true)} className="btn-primary">
                 <Plus className="w-4 h-4 mr-2" />
                 Add Connection
@@ -441,10 +445,9 @@ const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                     key={connection.id}
                     initial={{ opacity: 0, y: 20 }}
                     animate={{ opacity: 1, y: 0 }}
-                    className={`card p-6 cursor-pointer transition-all duration-200 hover:shadow-amoled-lg ${
+                    className={`card p-6 transition-all duration-200 hover:shadow-amoled-lg ${
                       connection.is_active ? 'ring-2 ring-amoled-accent' : ''
                     }`}
-                    onClick={() => onConnectionSelect(connection)}
                   >
                     <div className="flex items-start justify-between mb-4">
                       <div className="flex items-center space-x-3">
@@ -468,6 +471,7 @@ const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                             handleEdit(connection);
                           }}
                           className="p-2 text-amoled-text-muted hover:text-amoled-text hover:bg-amoled-gray rounded-lg transition-colors"
+                          title="Edit Connection"
                         >
                           <Edit3 className="w-4 h-4" />
                         </button>
@@ -477,13 +481,14 @@ const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                             handleDelete(connection.id);
                           }}
                           className="p-2 text-amoled-text-muted hover:text-amoled-error hover:bg-amoled-error/10 rounded-lg transition-colors"
+                          title="Delete Connection"
                         >
                           <Trash2 className="w-4 h-4" />
                         </button>
                       </div>
                     </div>
 
-                    <div className="space-y-2 text-sm">
+                    <div className="space-y-2 text-sm mb-4">
                       <div className="flex justify-between">
                         <span className="text-amoled-text-muted">Endpoint:</span>
                         <span className="text-amoled-text font-mono">
@@ -496,11 +501,35 @@ const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                           {connection.config.region}
                         </span>
                       </div>
+                      <div className="flex justify-between">
+                        <span className="text-amoled-text-muted">Created:</span>
+                        <span className="text-amoled-text">
+                          {new Date(connection.created_at).toLocaleDateString()}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="flex space-x-2">
+                      <button
+                        onClick={() => onConnectionSelect(connection)}
+                        className={`btn-primary flex-1 ${
+                          connection.is_active ? 'opacity-50 cursor-not-allowed' : ''
+                        }`}
+                        disabled={connection.is_active}
+                      >
+                        {connection.is_active ? (
+                          <>
+                            <Check className="w-4 h-4 mr-2" />
+                            Connected
+                          </>
+                        ) : (
+                          'Connect'
+                        )}
+                      </button>
                       {connection.is_active && (
-                        <div className="flex items-center space-x-2 mt-3 pt-3 border-t border-amoled-border">
-                          <Check className="w-4 h-4 text-amoled-success" />
-                          <span className="text-sm text-amoled-success">Active</span>
-                        </div>
+                        <span className="text-xs text-amoled-success flex items-center px-2">
+                          Active
+                        </span>
                       )}
                     </div>
                   </motion.div>
